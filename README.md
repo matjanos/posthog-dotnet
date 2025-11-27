@@ -11,6 +11,7 @@ For documentation on the specific packages, see the README files in the respecti
 |---------|---------| -----------
 | [PostHog.AspNetCore](src/PostHog.AspNetCore/README.md) | [![NuGet version (PostHog.AspNetCore)](https://img.shields.io/nuget/v/PostHog.AspNetCore.svg?style=flat-square)](https://www.nuget.org/packages/PostHog.AspNetCore/) | For use in ASP.NET Core projects.
 | [PostHog](src/PostHog/README.md) | [![NuGet version (PostHog)](https://img.shields.io/nuget/v/PostHog.svg?style=flat-square)](https://www.nuget.org/packages/PostHog/)                                  | The core library. Over time, this will support client environments such as Unit, Xamarin, etc.
+| [PostHog.AI](src/PostHog.AI/README.md) | (unreleased) | AI tracking helpers (LLM usage, sanitization, provider wrappers in progress).
 
 > [!WARNING]  
 > These packages are currently in a pre-release stage. We're making them available publicly to solicit 
