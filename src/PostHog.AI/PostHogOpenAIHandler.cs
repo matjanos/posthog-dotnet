@@ -210,7 +210,7 @@ public class PostHogOpenAIHandler : DelegatingHandler
         return "$ai_generation";
     }
 
-    private async Task CaptureEventAsync(
+    private Task CaptureEventAsync(
         HttpRequestMessage request,
         JsonNode? requestJson,
         HttpResponseMessage? response,
@@ -496,6 +496,7 @@ public class PostHogOpenAIHandler : DelegatingHandler
             _logger.LogCaptureFailure(ex);
         }
 #pragma warning restore CA1031
+        return Task.CompletedTask;
     }
 
     private sealed class TrackingStream : Stream
