@@ -10,6 +10,7 @@ namespace PostHog.AI;
 /// <summary>
 /// A delegating handler that intercepts OpenAI API calls and sends events to PostHog.
 /// </summary>
+[Obsolete("Use PostHogChatClient with IChatClient pipeline instead.")]
 public class PostHogOpenAIHandler : DelegatingHandler
 {
     private readonly IPostHogClient _postHogClient;

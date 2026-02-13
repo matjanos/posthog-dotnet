@@ -1,3 +1,4 @@
+#pragma warning disable CS0618 // Obsolete type usage - testing legacy extensions
 using Microsoft.Extensions.DependencyInjection;
 
 namespace PostHog.AI.Tests;
