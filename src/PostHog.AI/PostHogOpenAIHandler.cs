@@ -35,6 +35,17 @@ public class PostHogOpenAIHandler : DelegatingHandler
         }
 #endif
 
+        // Only inference endpoints (chat/completions, completions, responses, embeddings)
+        // produce meaningful AI events. Other endpoints that share the same instrumented
+        // OpenAI client - such as file uploads (/v1/files) - must not be recorded as
+        // "$ai_generation" events, otherwise they show up as phantom generations with an
+        // "unknown" model and span name.
+        var eventName = DetermineEventName(request);
+        if (eventName == null)
+        {
+            return await base.SendAsync(request, cancellationToken);
+        }
+
         // Capture context eagerly before any async work that might exit the caller's scope
         var capturedContext = PostHogAIContext.Current;
 
@@ -67,7 +78,7 @@ public class PostHogOpenAIHandler : DelegatingHandler
                 null,
                 null,
                 stopwatch.Elapsed.TotalSeconds,
-                DetermineEventName(request),
+                eventName,
                 ex
             );
             throw;
@@ -75,7 +86,6 @@ public class PostHogOpenAIHandler : DelegatingHandler
 
         // Check for streaming
         var isStreaming = response.Content.Headers.ContentType?.MediaType == "text/event-stream";
-        var eventName = DetermineEventName(request);
 
         if (isStreaming)
         {
@@ -201,19 +211,33 @@ public class PostHogOpenAIHandler : DelegatingHandler
         return jsonNode;
     }
 
-    private static string DetermineEventName(HttpRequestMessage request)
+    /// <summary>
+    /// Determines the PostHog AI event name for a request, or <c>null</c> if the request
+    /// targets an endpoint that should not be tracked as an AI event (e.g. file uploads).
+    /// </summary>
+    private static string? DetermineEventName(HttpRequestMessage request)
     {
-        if (
-            request.RequestUri?.AbsolutePath.Contains(
-                "/embeddings",
-                StringComparison.OrdinalIgnoreCase
-            ) == true
-        )
+        var path = request.RequestUri?.AbsolutePath;
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        if (path.Contains("/embeddings", StringComparison.OrdinalIgnoreCase))
         {
             return PostHogAIFieldNames.Embedding;
         }
 
-        return PostHogAIFieldNames.Generation;
+        // Covers both "/chat/completions" and legacy "/completions", plus the Responses API.
+        if (
+            path.EndsWith("/completions", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/responses", StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            return PostHogAIFieldNames.Generation;
+        }
+
+        return null;
     }
 
     private void CaptureEvent(

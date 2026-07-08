@@ -1001,6 +1001,50 @@ public sealed class PostHogOpenAIHandlerTests : IDisposable
     }
 
     [Fact]
+    public async Task SendAsyncDoesNotCaptureNonInferenceEndpointFileUpload()
+    {
+        // Arrange - a file upload to /v1/files (as used by OpenAIFileClient)
+        using var responseContent = new StringContent(
+            JsonSerializer.Serialize(
+                new
+                {
+                    id = "file-abc123",
+                    @object = "file",
+                    purpose = "assistants",
+                }
+            ),
+            Encoding.UTF8,
+            "application/json"
+        );
+        _innerHandler.Response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = responseContent,
+        };
+
+        using var requestContent = new ByteArrayContent(new byte[] { 1, 2, 3 });
+
+        // Act
+        using var response = await _client.PostAsync(
+            new Uri("/v1/files", UriKind.Relative),
+            requestContent
+        );
+
+        // Assert - the request succeeds but no AI event is captured
+        Assert.True(response.IsSuccessStatusCode);
+
+        _postHogClient
+            .DidNotReceive()
+            .Capture(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Dictionary<string, object>>(),
+                Arg.Any<GroupCollection?>(),
+                Arg.Any<bool>(),
+                Arg.Any<DateTimeOffset?>()
+            );
+    }
+
+    [Fact]
     public void AddPostHogOpenAIClientThrowsOnNullOrEmptyApiKey()
     {
         var services = new ServiceCollection();
