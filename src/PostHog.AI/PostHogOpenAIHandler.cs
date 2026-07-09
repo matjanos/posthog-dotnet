@@ -145,7 +145,11 @@ public class PostHogOpenAIHandler : DelegatingHandler
             // that cannot be re-read. If we let ReadContentAndParseJsonAsync
             // consume it first, the OpenAI SDK will get "Stream does not support
             // reading" when it tries to deserialize the response downstream.
+#if NET8_0_OR_GREATER
             var contentBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+#else
+            var contentBytes = await response.Content.ReadAsByteArrayAsync();
+#endif
 
             // Replace with a fresh ByteArrayContent that the OpenAI SDK can
             // read independently — the original DecompressedContent is exhausted
