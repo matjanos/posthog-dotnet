@@ -139,6 +139,18 @@ public class PostHogOpenAIHandler : DelegatingHandler
         else
         {
             stopwatch.Stop();
+
+            // Buffer the response body into memory before reading it for telemetry. The SDK
+            // transport sends requests with HttpCompletionOption.ResponseHeadersRead and responses
+            // are frequently gzip-compressed, so the content is backed by a one-shot, non-seekable
+            // stream (lazily wrapped in a GZipStream by HttpClient's DecompressionHandler). Reading
+            // it here without buffering consumes that stream; the downstream consumer (e.g. the
+            // OpenAI SDK) then reconstructs a decompression stream over the dead source and throws
+            // "Stream does not support reading. (Parameter 'stream')", masking the real error.
+            // Buffering first keeps the content re-readable and lets any genuine read failure
+            // surface here as its real exception. This mirrors the request-side buffering above.
+            await response.Content.LoadIntoBufferAsync();
+
             var responseJson = await ReadContentAndParseJsonAsync(
                 response.Content,
                 _logger.LogResponseContentFailure,
