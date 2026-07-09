@@ -175,7 +175,9 @@ public class PostHogOpenAIHandler : DelegatingHandler
             {
                 // Ignore — response may not be JSON
             }
+#pragma warning disable CA1031 // Do not catch general exception types
             catch (Exception ex)
+#pragma warning restore CA1031
             {
                 _logger.LogResponseContentFailure(ex);
             }
