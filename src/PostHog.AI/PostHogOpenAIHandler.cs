@@ -139,11 +139,46 @@ public class PostHogOpenAIHandler : DelegatingHandler
         else
         {
             stopwatch.Stop();
-            var responseJson = await ReadContentAndParseJsonAsync(
-                response.Content,
-                _logger.LogResponseContentFailure,
-                cancellationToken
-            );
+
+            // Buffer the response content BEFORE parsing for PostHog, because
+            // DecompressionHandler.DecompressedContent wraps a read-once stream
+            // that cannot be re-read. If we let ReadContentAndParseJsonAsync
+            // consume it first, the OpenAI SDK will get "Stream does not support
+            // reading" when it tries to deserialize the response downstream.
+#if NET8_0_OR_GREATER
+            var contentBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+#else
+            var contentBytes = await response.Content.ReadAsByteArrayAsync();
+#endif
+
+            // Replace with a fresh ByteArrayContent that the OpenAI SDK can
+            // read independently — the original DecompressedContent is exhausted
+            // after the ReadAsByteArrayAsync call above.
+            var bufferedContent = new ByteArrayContent(contentBytes);
+            foreach (var header in response.Content.Headers)
+            {
+                bufferedContent.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+            response.Content = bufferedContent;
+
+            // Parse the JSON from the buffered bytes for the PostHog event
+            JsonNode? responseJson = null;
+            try
+            {
+                using var jsonStream = new MemoryStream(contentBytes);
+                responseJson = await JsonNode.ParseAsync(
+                    jsonStream,
+                    cancellationToken: cancellationToken
+                );
+            }
+            catch (JsonException)
+            {
+                // Ignore — response may not be JSON
+            }
+            catch (Exception ex)
+            {
+                _logger.LogResponseContentFailure(ex);
+            }
 
             CaptureEvent(
                 capturedContext,
@@ -433,28 +468,30 @@ public class PostHogOpenAIHandler : DelegatingHandler
                 eventProperties[PostHogAIFieldNames.SessionId] = context.SessionId;
             }
 
-            // Span ID
-            if (!eventProperties.ContainsKey(PostHogAIFieldNames.SpanId) && context?.SpanId != null)
+            // Span ID - generate unique per event
+            if (!eventProperties.ContainsKey(PostHogAIFieldNames.SpanId))
             {
-                eventProperties[PostHogAIFieldNames.SpanId] = context.SpanId;
+                eventProperties[PostHogAIFieldNames.SpanId] =
+                    ActivitySpanId.CreateRandom().ToString();
             }
 
-            // Span Name
-            if (
-                !eventProperties.ContainsKey(PostHogAIFieldNames.SpanName)
-                && context?.SpanName != null
-            )
+            // Span Name - use model
+            if (!eventProperties.ContainsKey(PostHogAIFieldNames.SpanName))
             {
-                eventProperties[PostHogAIFieldNames.SpanName] = context.SpanName;
+                var spanModel = eventProperties.TryGetValue(PostHogAIFieldNames.Model, out var sm)
+                    ? sm?.ToString()
+                    : null;
+                eventProperties[PostHogAIFieldNames.SpanName] = spanModel ?? "chat-completion";
             }
 
-            // Parent ID
-            if (
-                !eventProperties.ContainsKey(PostHogAIFieldNames.ParentId)
-                && context?.ParentId != null
-            )
+            // Parent ID - context SpanId becomes parent
+            if (!eventProperties.ContainsKey(PostHogAIFieldNames.ParentId))
             {
-                eventProperties[PostHogAIFieldNames.ParentId] = context.ParentId;
+                var parentId = context?.SpanId ?? context?.ParentId;
+                if (parentId != null)
+                {
+                    eventProperties[PostHogAIFieldNames.ParentId] = parentId;
+                }
             }
 
             // Merge context properties (this will override context properties if they exist in Properties dict)
