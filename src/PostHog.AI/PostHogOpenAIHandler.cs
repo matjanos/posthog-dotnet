@@ -8,6 +8,21 @@ using Microsoft.Extensions.Logging;
 namespace PostHog.AI;
 
 /// <summary>
+/// The kind of AI API request, used to classify the captured PostHog event.
+/// </summary>
+internal enum AiRequestKind
+{
+    /// <summary>A model invocation (chat/text completion). Captured as <c>$ai_generation</c>.</summary>
+    Generation,
+
+    /// <summary>An embedding request. Captured as <c>$ai_embedding</c>.</summary>
+    Embedding,
+
+    /// <summary>A non-model unit of work such as a file upload. Captured as <c>$ai_span</c>.</summary>
+    Span,
+}
+
+/// <summary>
 /// A delegating handler that intercepts OpenAI API calls and sends events to PostHog.
 /// </summary>
 public class PostHogOpenAIHandler : DelegatingHandler
@@ -40,6 +55,8 @@ public class PostHogOpenAIHandler : DelegatingHandler
 
         var stopwatch = Stopwatch.StartNew();
 
+        var requestKind = DetermineRequestKind(request);
+
         // Buffer request content so ReadAsStreamAsync doesn't consume the content before base.SendAsync
         if (request.Content != null)
         {
@@ -67,7 +84,7 @@ public class PostHogOpenAIHandler : DelegatingHandler
                 null,
                 null,
                 stopwatch.Elapsed.TotalSeconds,
-                DetermineEventName(request),
+                requestKind,
                 ex
             );
             throw;
@@ -75,7 +92,6 @@ public class PostHogOpenAIHandler : DelegatingHandler
 
         // Check for streaming
         var isStreaming = response.Content.Headers.ContentType?.MediaType == "text/event-stream";
-        var eventName = DetermineEventName(request);
 
         if (isStreaming)
         {
@@ -120,7 +136,7 @@ public class PostHogOpenAIHandler : DelegatingHandler
                         response,
                         responseNode,
                         stopwatch.Elapsed.TotalSeconds,
-                        eventName,
+                        requestKind,
                         null
                     );
                 }
@@ -189,7 +205,7 @@ public class PostHogOpenAIHandler : DelegatingHandler
                 response,
                 responseJson,
                 stopwatch.Elapsed.TotalSeconds,
-                eventName,
+                requestKind,
                 null
             );
         }
@@ -238,19 +254,58 @@ public class PostHogOpenAIHandler : DelegatingHandler
         return jsonNode;
     }
 
-    private static string DetermineEventName(HttpRequestMessage request)
+    private static AiRequestKind DetermineRequestKind(HttpRequestMessage request)
     {
-        if (
-            request.RequestUri?.AbsolutePath.Contains(
-                "/embeddings",
-                StringComparison.OrdinalIgnoreCase
-            ) == true
-        )
+        var path = request.RequestUri?.AbsolutePath;
+        if (path == null)
         {
-            return PostHogAIFieldNames.Embedding;
+            return AiRequestKind.Generation;
         }
 
-        return PostHogAIFieldNames.Generation;
+        if (path.Contains("/embeddings", StringComparison.OrdinalIgnoreCase))
+        {
+            return AiRequestKind.Embedding;
+        }
+
+        // Non-generation endpoints (file uploads, file management, etc.) are units of
+        // work rather than model invocations — represent them as spans so they don't
+        // pollute generation metrics with "unknown" models.
+        if (
+            path.Contains("/files", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/uploads", StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            return AiRequestKind.Span;
+        }
+
+        return AiRequestKind.Generation;
+    }
+
+    private static string EventNameForKind(AiRequestKind kind) =>
+        kind switch
+        {
+            AiRequestKind.Embedding => PostHogAIFieldNames.Embedding,
+            AiRequestKind.Span => PostHogAIFieldNames.Span,
+            _ => PostHogAIFieldNames.Generation,
+        };
+
+    private static string DeriveSpanName(HttpRequestMessage request)
+    {
+        var path = request.RequestUri?.AbsolutePath;
+        if (path != null)
+        {
+            if (path.Contains("/files", StringComparison.OrdinalIgnoreCase))
+            {
+                return "file-upload";
+            }
+
+            if (path.Contains("/uploads", StringComparison.OrdinalIgnoreCase))
+            {
+                return "upload";
+            }
+        }
+
+        return "api-request";
     }
 
     private void CaptureEvent(
@@ -260,12 +315,15 @@ public class PostHogOpenAIHandler : DelegatingHandler
         HttpResponseMessage? response,
         JsonNode? responseJson,
         double latency,
-        string eventName,
+        AiRequestKind kind,
         Exception? exception
     )
     {
         try
         {
+            var eventName = EventNameForKind(kind);
+            var isGenerationLike =
+                kind == AiRequestKind.Generation || kind == AiRequestKind.Embedding;
             var eventProperties = new Dictionary<string, object>();
 
             // Basic Info
@@ -424,6 +482,17 @@ public class PostHogOpenAIHandler : DelegatingHandler
                     eventProperties[PostHogAIFieldNames.OutputChoices] = outputChoices;
                 }
 
+                // For non-generation spans, capture the raw response as structured
+                // output state instead of generation-only fields like output choices.
+                if (
+                    kind == AiRequestKind.Span
+                    && context?.PrivacyMode != true
+                    && !eventProperties.ContainsKey(PostHogAIFieldNames.OutputState)
+                )
+                {
+                    eventProperties[PostHogAIFieldNames.OutputState] = responseJson;
+                }
+
                 // Model from response might be more accurate
                 if (responseJson["model"] != null)
                 {
@@ -450,8 +519,10 @@ public class PostHogOpenAIHandler : DelegatingHandler
                 }
             }
 
-            // Defaults if missing
-            if (!eventProperties.ContainsKey(PostHogAIFieldNames.Model))
+            // Defaults if missing. Only model invocations (generation/embedding) carry a
+            // model; spans (file uploads, etc.) intentionally omit it rather than reporting
+            // a misleading "unknown" model.
+            if (isGenerationLike && !eventProperties.ContainsKey(PostHogAIFieldNames.Model))
                 eventProperties[PostHogAIFieldNames.Model] = model ?? "unknown";
 
             // Context integration
@@ -477,13 +548,24 @@ public class PostHogOpenAIHandler : DelegatingHandler
                     ActivitySpanId.CreateRandom().ToString();
             }
 
-            // Span Name - use model
+            // Span Name - use the model for generations, or a descriptive name derived
+            // from the endpoint for non-generation spans.
             if (!eventProperties.ContainsKey(PostHogAIFieldNames.SpanName))
             {
-                var spanModel = eventProperties.TryGetValue(PostHogAIFieldNames.Model, out var sm)
-                    ? sm?.ToString()
-                    : null;
-                eventProperties[PostHogAIFieldNames.SpanName] = spanModel ?? "chat-completion";
+                if (isGenerationLike)
+                {
+                    var spanModel = eventProperties.TryGetValue(
+                        PostHogAIFieldNames.Model,
+                        out var sm
+                    )
+                        ? sm?.ToString()
+                        : null;
+                    eventProperties[PostHogAIFieldNames.SpanName] = spanModel ?? "chat-completion";
+                }
+                else
+                {
+                    eventProperties[PostHogAIFieldNames.SpanName] = DeriveSpanName(request);
+                }
             }
 
             // Parent ID - context SpanId becomes parent

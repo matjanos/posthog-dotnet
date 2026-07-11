@@ -17,6 +17,12 @@ public static class PostHogAIFieldNames
     /// </summary>
     public const string Embedding = "$ai_embedding";
 
+    /// <summary>
+    /// Event name for a non-generation unit of work within a trace (e.g. a file
+    /// upload or other provider API call that is not a model invocation).
+    /// </summary>
+    public const string Span = "$ai_span";
+
     // Basic properties
     /// <summary>
     /// AI service provider (e.g., "openai", "anthropic", "gemini").
@@ -142,6 +148,17 @@ public static class PostHogAIFieldNames
     /// Parent span ID for tree view grouping.
     /// </summary>
     public const string ParentId = "$ai_parent_id";
+
+    // Span state (for $ai_span events)
+    /// <summary>
+    /// Structured input state for a span (e.g. request parameters that are not a model prompt).
+    /// </summary>
+    public const string InputState = "$ai_input_state";
+
+    /// <summary>
+    /// Structured output state for a span (e.g. the result of a non-generation API call).
+    /// </summary>
+    public const string OutputState = "$ai_output_state";
 
     // Error handling
     /// <summary>

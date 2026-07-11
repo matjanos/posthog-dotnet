@@ -1093,6 +1093,110 @@ public sealed class PostHogOpenAIHandlerTests : IDisposable
             );
     }
 
+    [Fact]
+    public async Task SendAsyncCapturesSpanEventForFileUpload()
+    {
+        // Arrange - a file upload is multipart/form-data, not JSON chat
+        var responseBody = new
+        {
+            id = "file-abc123",
+            @object = "file",
+            bytes = 414019,
+            purpose = "user_data",
+            filename = "receipt.pdf",
+        };
+
+        using var responseContent = new StringContent(
+            JsonSerializer.Serialize(responseBody),
+            Encoding.UTF8,
+            "application/json"
+        );
+        _innerHandler.Response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = responseContent,
+        };
+
+        using var multipart = new ByteArrayContent(new byte[] { 1, 2, 3 });
+        multipart.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
+
+        // Act
+        using var response = await _client.PostAsync(
+            new Uri("/v1/files", UriKind.Relative),
+            multipart
+        );
+
+        // Assert - captured as a span, not a generation, and without a bogus model
+        Assert.True(response.IsSuccessStatusCode);
+
+        _postHogClient
+            .Received(1)
+            .Capture(
+                Arg.Any<string>(),
+                PostHogAIFieldNames.Span,
+                Arg.Is<Dictionary<string, object>>(props =>
+                    !props.ContainsKey(PostHogAIFieldNames.Model)
+                    && (string)props[PostHogAIFieldNames.SpanName] == "file-upload"
+                    && (string)props[PostHogAIFieldNames.Provider] == "openai"
+                    && (int)props[PostHogAIFieldNames.HttpStatus] == 200
+                    && props.ContainsKey(PostHogAIFieldNames.OutputState)
+                ),
+                null,
+                false,
+                Arg.Any<DateTimeOffset?>()
+            );
+    }
+
+    [Fact]
+    public async Task SendAsyncSpanExcludesOutputStateWhenPrivacyModeIsTrue()
+    {
+        // Arrange
+        var responseBody = new
+        {
+            id = "file-abc123",
+            @object = "file",
+            filename = "receipt.pdf",
+        };
+
+        using var responseContent = new StringContent(
+            JsonSerializer.Serialize(responseBody),
+            Encoding.UTF8,
+            "application/json"
+        );
+        _innerHandler.Response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = responseContent,
+        };
+
+        using var multipart = new ByteArrayContent(new byte[] { 1, 2, 3 });
+        multipart.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
+
+        // Act
+        using (PostHogAIContext.BeginScope(privacyMode: true))
+        {
+            using var response = await _client.PostAsync(
+                new Uri("/v1/files", UriKind.Relative),
+                multipart
+            );
+
+            Assert.True(response.IsSuccessStatusCode);
+        }
+
+        // Assert
+        _postHogClient
+            .Received(1)
+            .Capture(
+                Arg.Any<string>(),
+                PostHogAIFieldNames.Span,
+                Arg.Is<Dictionary<string, object>>(props =>
+                    !props.ContainsKey(PostHogAIFieldNames.OutputState)
+                    && (string)props[PostHogAIFieldNames.SpanName] == "file-upload"
+                ),
+                null,
+                false,
+                Arg.Any<DateTimeOffset?>()
+            );
+    }
+
     public void Dispose()
     {
         _client.Dispose();
