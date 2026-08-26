@@ -218,8 +218,9 @@ public class PostHogChatClient : DelegatingChatClient
             // Generate a unique span ID per generation event
             eventProperties[PostHogAIFieldNames.SpanId] = ActivitySpanId.CreateRandom().ToString();
 
-            // Use model as span name for individual generations
-            eventProperties[PostHogAIFieldNames.SpanName] = model ?? "chat-completion";
+            // Use the operation scoped by the caller; model attribution is captured separately.
+            eventProperties[PostHogAIFieldNames.SpanName] =
+                context?.SpanName ?? "chat-completion";
 
             // Context's SpanId becomes this event's parent, linking back to the scope
             var parentId = context?.SpanId ?? context?.ParentId;
