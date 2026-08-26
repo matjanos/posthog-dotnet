@@ -548,19 +548,13 @@ public class PostHogOpenAIHandler : DelegatingHandler
                     ActivitySpanId.CreateRandom().ToString();
             }
 
-            // Span Name - use the model for generations, or a descriptive name derived
-            // from the endpoint for non-generation spans.
+            // Prefer the operation scoped by the caller. Models belong in $ai_model, not span names.
             if (!eventProperties.ContainsKey(PostHogAIFieldNames.SpanName))
             {
                 if (isGenerationLike)
                 {
-                    var spanModel = eventProperties.TryGetValue(
-                        PostHogAIFieldNames.Model,
-                        out var sm
-                    )
-                        ? sm?.ToString()
-                        : null;
-                    eventProperties[PostHogAIFieldNames.SpanName] = spanModel ?? "chat-completion";
+                    eventProperties[PostHogAIFieldNames.SpanName] =
+                        context?.SpanName ?? "chat-completion";
                 }
                 else
                 {

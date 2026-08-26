@@ -130,6 +130,11 @@ public static class PostHogAIFieldNames
     public const string TraceId = "$ai_trace_id";
 
     /// <summary>
+    /// Name for the overall trace. This describes the operation, not an individual model call.
+    /// </summary>
+    public const string TraceName = "$ai_trace_name";
+
+    /// <summary>
     /// Groups related traces together.
     /// </summary>
     public const string SessionId = "$ai_session_id";

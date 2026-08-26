@@ -211,7 +211,8 @@ public class PostHogChatClientTests
                 distinctId: "user-123",
                 traceId: "trace-abc",
                 spanId: "span-xyz",
-                sessionId: "session-456"
+                sessionId: "session-456",
+                spanName: "document-upload"
             )
         )
         {
@@ -230,6 +231,8 @@ public class PostHogChatClientTests
                         && (string)props[PostHogAIFieldNames.SpanId] != "span-xyz"
                         && (string)props[PostHogAIFieldNames.ParentId] == "span-xyz"
                         && (string)props[PostHogAIFieldNames.SessionId] == "session-456"
+                        && (string)props[PostHogAIFieldNames.SpanName] == "document-upload"
+                        && (string)props[PostHogAIFieldNames.Model] == "gpt-4"
                     ),
                     null,
                     false,

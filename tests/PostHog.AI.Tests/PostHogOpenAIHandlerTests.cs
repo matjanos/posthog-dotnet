@@ -1063,6 +1063,7 @@ public sealed class PostHogOpenAIHandlerTests : IDisposable
         // Act - set custom properties via context
         using (
             PostHogAIContext.BeginScope(
+                spanName: "email-categorization",
                 properties: new Dictionary<string, object>
                 {
                     { "custom_prop", "custom_value" },
@@ -1086,6 +1087,8 @@ public sealed class PostHogOpenAIHandlerTests : IDisposable
                 PostHogAIFieldNames.Generation,
                 Arg.Is<Dictionary<string, object>>(props =>
                     (string)props["custom_prop"] == "custom_value"
+                    && (string)props[PostHogAIFieldNames.SpanName] == "email-categorization"
+                    && (string)props[PostHogAIFieldNames.Model] == "gpt-4-0613"
                 ),
                 null,
                 false,
